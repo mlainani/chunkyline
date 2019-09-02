@@ -6,11 +6,32 @@
 #include <termios.h>
 #include <unistd.h>
 
-const size_t LINE_SIZE = 4;
+const size_t LINE_SIZE = 11;
 
 enum codes {
 	CTRL_C = 3
 };
+
+static int refresh_line(const char *prompt, const char *line)
+{
+	char fresh[128] = { 0xD }; /* carriage return */
+	size_t offset = 1;
+	char erase[3] = { 0x1B, '[', 'K' }; /* Erase in Line */
+
+	memcpy(fresh + offset, prompt, strlen(prompt));
+
+	offset += strlen(prompt);
+
+	memcpy(fresh + offset, erase, sizeof(erase));
+
+	offset += sizeof(erase);
+
+	memcpy(fresh + offset, line, strlen(line));
+
+	offset += strlen(line);
+
+	return write(STDOUT_FILENO, &fresh, offset);
+}
 
 int main()
 {
@@ -18,7 +39,8 @@ int main()
 	struct termios cooked, raw;
 	const char *prompt = "chunky-monkey> ";
 	const char *farewell = "Goodbye!";
-	size_t index = 0;
+	size_t index = 0, len = 0;
+	char cursor_next_line[] = { 0x1B, '[', '8', '0', '0', 'E' };
 
 	/* Are we being run from a terminal? */
 	if (!isatty(STDIN_FILENO))
@@ -72,12 +94,25 @@ int main()
 			goto restore_cooked_onsuccess;
 
 		case '?':
+			
+			write(STDOUT_FILENO, cursor_next_line, sizeof(cursor_next_line));
 			write(STDOUT_FILENO, farewell, strlen(farewell));
 			goto restore_cooked_onsuccess;
 
+		case 8: /* backspace */
+		case 127:
+			line[--index] = '\0';
+			--len;
+			refresh_line(prompt, line);
+			break;
+
 		default:
-			if (index < LINE_SIZE - 1)
+			if (index < LINE_SIZE - 1) {
+				
 				line[index++] = ascii_char;
+				++len;
+				refresh_line(prompt, line);
+			}
 			else {
 				line[index] = '\0';
 				/* write(STDOUT_FILENO, line, LINE_SIZE - 1); */
@@ -89,7 +124,8 @@ int main()
 
 restore_cooked_onsuccess:
 	tcsetattr(STDIN_FILENO, TCSAFLUSH, &cooked);
-	printf("%s\n", line);
+	/* printf("%s\n", line); */
+	printf("\n");
 	exit(EXIT_SUCCESS);
 
 restore_cooked_onfailure:
